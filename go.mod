@@ -1,3 +1,3 @@
-module jev
+module github.com/peach-zhang/typesafe-go
 
-go 1.26.7
+go 1.26

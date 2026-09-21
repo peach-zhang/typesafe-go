@@ -1,4 +1,4 @@
-# jev — TypeSafe System One 的 Go SDK
+# typesafe-go — TypeSafe System One 的 Go SDK
 
 参考官方 JavaScript SDK(`TypeSafeClient` + `choice()/score()/noul()` 辅助函数)设计的
 TypeSafe System One API(旗舰模型 Jev)Go 客户端。模型提供类型化的判断与概率,
@@ -7,8 +7,8 @@ TypeSafe System One API(旗舰模型 Jev)Go 客户端。模型提供类型化的
 ## 项目结构
 
 ```
-jev/
-├── go.mod                  # module jev(Go 1.26)
+typesafe-go/
+├── go.mod                  # module github.com/peach-zhang/typesafe-go
 ├── typesafe/               # SDK 包
 │   ├── client.go           # Client、SystemOne、roundTrip、函数式选项
 │   ├── questions.go        # Noul / Choice / Score 问题构造

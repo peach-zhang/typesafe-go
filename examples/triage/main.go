@@ -7,7 +7,7 @@ import (
 	"fmt"
 	"log"
 
-	"jev/typesafe"
+	"github.com/peach-zhang/typesafe-go/typesafe"
 )
 
 var tickets = []string{
