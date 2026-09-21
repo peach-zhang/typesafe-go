@@ -4,19 +4,28 @@
 TypeSafe System One API(旗舰模型 Jev)Go 客户端。模型提供类型化的判断与概率,
 代码掌控工作流。
 
+## 安装
+
+```sh
+go get github.com/peach-zhang/typesafe-go
+```
+
+```go
+import typesafe "github.com/peach-zhang/typesafe-go"
+```
+
 ## 项目结构
 
 ```
-typesafe-go/
-├── go.mod                  # module github.com/peach-zhang/typesafe-go
-├── typesafe/               # SDK 包
-│   ├── client.go           # Client、SystemOne、roundTrip、函数式选项
-│   ├── questions.go        # Noul / Choice / Score 问题构造
-│   ├── response.go         # SystemOneResult、Answer、Usage
-│   ├── models.go           # Models 端点与 ModelCard
-│   ├── retry.go            # RetryPolicy、指数退避、Retry-After
-│   ├── errors.go           # APIError / 连接 / 超时错误与判定函数
-│   └── typesafe_test.go    # 单元测试(httptest 模拟服务端)
+typesafe-go/                # 包在仓库根,import 即模块路径
+├── client.go               # Client、SystemOne、roundTrip、函数式选项
+├── questions.go            # Noul / Choice / Score 问题构造
+├── response.go             # SystemOneResult、Answer、Usage
+├── models.go               # Models 端点与 ModelCard
+├── retry.go                # RetryPolicy、指数退避、Retry-After
+├── errors.go               # APIError / 连接 / 超时错误与判定函数
+├── logger.go               # Logger 接口与 LogLevel
+├── typesafe_test.go        # 单元测试(httptest 模拟服务端)
 └── examples/triage/        # 工单分类示例
 ```
 
@@ -154,7 +163,7 @@ case err != nil:                          // 其他
 - **`state` 只放相关上下文**,问题里用反引号路径引用嵌套值(如 `` `ticket.message` ``)
 - **原子化分解问题**;choice 最多 255 选项,score 至少 2 级、最多 10 级(本地校验)
 - **置信度用于路由**:`Confidence` 衡量概率分布集中度,低置信度送人工
-- 测试:`go test ./typesafe/`;静态检查:`go vet ./... && gofmt -l .`
+- 测试:`go test ./...`;静态检查:`go vet ./... && gofmt -l .`
 
 ## 许可证
 
