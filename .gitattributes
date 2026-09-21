@@ -1,0 +1,3 @@
+# Go 工具链输出 LF,统一换行符避免本地(Windows)与 CI(Linux)格式漂移
+* text=auto eol=lf
+*.png binary
