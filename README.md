@@ -155,3 +155,7 @@ case err != nil:                          // 其他
 - **原子化分解问题**;choice 最多 255 选项,score 至少 2 级、最多 10 级(本地校验)
 - **置信度用于路由**:`Confidence` 衡量概率分布集中度,低置信度送人工
 - 测试:`go test ./typesafe/`;静态检查:`go vet ./... && gofmt -l .`
+
+## 许可证
+
+[MIT](LICENSE)
