@@ -26,7 +26,11 @@ typesafe-go/                # 包在仓库根,import 即模块路径
 ├── errors.go               # APIError / 连接 / 超时错误与判定函数
 ├── logger.go               # Logger 接口与 LogLevel
 ├── typesafe_test.go        # 单元测试(httptest 模拟服务端)
-└── examples/triage/        # 工单分类示例
+└── examples/
+    ├── triage/             # 工单分类(Choice + Noul + Score 组合)
+    ├── content-moderation/ # 内容安全审核(多维度 Noul + 置信度路由)
+    ├── email-router/       # 邮件智能路由(概率分布 + 代码侧组合)
+    └── batch-processing/   # 批量并发处理(goroutine + 信号量控制)
 ```
 
 ## 快速开始
