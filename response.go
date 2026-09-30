@@ -32,7 +32,8 @@ type Answer struct {
 	// Probabilities 是完整概率分布:choice 映射到选项,score 映射到等级编号(字符串键)。
 	Probabilities map[string]float64 `json:"probabilities,omitempty"`
 	// Legend 是等级编号到描述的映射,仅 type == "score" 时返回。
-	Legend map[string]string `json:"legend,omitempty"`
+	// 实际 API 返回的 value 可能是对象而非纯字符串,因此使用 any 类型以兼容。
+	Legend map[string]any `json:"legend,omitempty"`
 	// Confidence 是 0~1 的置信度,总结概率分布的集中程度,仅 choice 与 score 返回。
 	// 注意它衡量分布集中度,不是整体流程的正确性许可。
 	Confidence float64 `json:"confidence,omitempty"`
