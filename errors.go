@@ -79,3 +79,8 @@ func hasStatus(err error, code int) bool {
 	var apiErr *APIError
 	return errors.As(err, &apiErr) && apiErr.StatusCode == code
 }
+
+// ErrResponseTooLarge 表示响应体超过客户端配置的大小上限
+// (见 WithMaxResponseBytes),读取被拒绝以避免耗尽内存。
+// 可用 errors.Is 判定。
+var ErrResponseTooLarge = errors.New("typesafe: 响应体过大")

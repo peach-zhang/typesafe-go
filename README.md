@@ -66,6 +66,24 @@ result.Answers["is_urgent"].Noul   // → 0.95
 result.Answers["frustration"].Score // → 1.05(可落在两级之间)
 ```
 
+## 读取答案
+
+`Answer` 被三原语共用,直接读字段可能在类型不符时静默返回零值。推荐用类型化
+访问器,类型不匹配时 `ok` 为 false;类型常量 `TypeNoul`/`TypeChoice`/`TypeScore`
+可用于比较 `answer.Type`:
+
+```go
+if c, ok := result.Answers["category"].AsChoice(); ok {
+    fmt.Println(c.Choice, c.Confidence, c.Probabilities)
+}
+if n, ok := result.Answers["is_urgent"].AsNoul(); ok {
+    fmt.Println(n.Probability)
+}
+if s, ok := result.Answers["frustration"].AsScore(); ok {
+    fmt.Println(s.Score, s.Legend, s.Confidence)
+}
+```
+
 ## 与 JavaScript SDK 的 API 对照
 
 | JavaScript SDK | 本 SDK (Go) |
@@ -125,7 +143,8 @@ client, err := typesafe.NewClient(
     typesafe.WithAPIKey("..."),            // 或环境变量 TYPESAFE_API_KEY
     typesafe.WithBaseURL("https://api.typesafe.ai"),
     typesafe.WithDefaultModel("jev-latest"),
-    typesafe.WithTimeout(30*time.Second),  // 单次尝试超时
+    typesafe.WithTimeout(30*time.Second),  // 单次尝试超时(<=0 表示不设)
+    typesafe.WithMaxResponseBytes(1<<20),  // 响应体上限,默认 32 MiB
     typesafe.WithRetryPolicy(policy),      // 见下
     typesafe.WithHeader("X-Custom", "v"),  // 附加默认头
     typesafe.WithHTTPClient(hc),           // 注入自定义 Transport
@@ -154,6 +173,7 @@ case typesafe.IsRateLimitError(err):      // 429,重试耗尽
 case typesafe.IsUnprocessableEntityError(err): // 422,请求体校验失败
 case typesafe.IsTimeoutError(err):        // 尝试超时且重试耗尽
 case typesafe.IsConnectionError(err):     // 网络层失败
+case errors.Is(err, typesafe.ErrResponseTooLarge): // 响应体超过大小上限
 case err != nil:                          // 其他
 }
 ```
@@ -167,6 +187,7 @@ case err != nil:                          // 其他
 - **`state` 只放相关上下文**,问题里用反引号路径引用嵌套值(如 `` `ticket.message` ``)
 - **原子化分解问题**;choice 最多 255 选项,score 至少 2 级、最多 10 级(本地校验)
 - **置信度用于路由**:`Confidence` 衡量概率分布集中度,低置信度送人工
+- **防护默认开启**:单次尝试 60s 超时(`WithTimeout(0)` 可关闭)、响应体 32 MiB 上限(`WithMaxResponseBytes`),避免挂起与内存膨胀
 - 测试:`go test ./...`;静态检查:`go vet ./... && gofmt -l .`
 
 ## 许可证

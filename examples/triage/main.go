@@ -15,6 +15,10 @@ var tickets = []string{
 	"Quick question: do you offer volume discounts for annual plans?",
 }
 
+// frustrationLevels 是情绪评分的有序等级,同时用于推断最大等级,
+// 避免 API 未返回 Legend 时把最大等级算成 -1。
+var frustrationLevels = typesafe.ScoreCriteria{"平静", "略感不满", "沮丧", "非常愤怒"}
+
 func main() {
 	client, err := typesafe.NewClient() // API key 来自环境变量 TYPESAFE_API_KEY
 	if err != nil {
@@ -55,7 +59,7 @@ func triage(ctx context.Context, client *typesafe.Client, document string) {
 				False: "常规咨询,没有时间压力",
 			}),
 			"frustration": typesafe.Score("How frustrated is the customer in `ticket.message`?",
-				typesafe.ScoreCriteria{"平静", "略感不满", "沮丧", "非常愤怒"},
+				frustrationLevels,
 			),
 		},
 	})
@@ -67,7 +71,10 @@ func triage(ctx context.Context, client *typesafe.Client, document string) {
 	category := result.Answers["category"]
 	urgency := result.Answers["is_urgent"]
 	frustration := result.Answers["frustration"]
-	maxLevel := float64(len(frustration.Legend) - 1)
+	maxLevel := float64(len(frustrationLevels) - 1)
+	if n := len(frustration.Legend); n > 1 { // API 返回了更准确的 Legend 时以它为准
+		maxLevel = float64(n - 1)
+	}
 
 	fmt.Printf("工单: %s\n", document)
 	fmt.Printf("  类别:   %s(置信度 %.2f)\n", category.Choice, category.Confidence)

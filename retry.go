@@ -57,7 +57,11 @@ func (p RetryPolicy) retryStatus(code int) bool {
 }
 
 // backoff 计算第 retry 次重试(从 0 计)前的等待时长,含 jitter。
+// BackoffInitial <= 0 时返回 0,表示立即重试。
 func (p RetryPolicy) backoff(retry int) time.Duration {
+	if p.BackoffInitial <= 0 {
+		return 0
+	}
 	d := p.BackoffInitial << uint(retry)
 	if d <= 0 || d > p.BackoffMax { // 位移溢出或超过上限时封顶
 		d = p.BackoffMax

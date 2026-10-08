@@ -34,19 +34,19 @@ type ScoreCriteria []any
 //
 // 若干标签可能同时适用时,应为每个标签各建一个 Noul 问题,而不是用 Choice。
 func Noul(instructions any, criteria *NoulCriteria) Question {
-	return noulQuestion{Type: "noul", Instructions: instructions, Criteria: criteria}
+	return noulQuestion{Type: TypeNoul, Instructions: instructions, Criteria: criteria}
 }
 
 // Choice 构造一个单选题:模型从 criteria 定义的选项集合中选出概率最高的一个,
 // 并返回全部选项的概率分布。最多支持 255 个选项。
 func Choice(instructions any, criteria ChoiceCriteria) Question {
-	return choiceQuestion{Type: "choice", Instructions: instructions, Criteria: criteria}
+	return choiceQuestion{Type: TypeChoice, Instructions: instructions, Criteria: criteria}
 }
 
 // Score 构造一个等级评分题:沿 criteria 描述的有序等级评估程度,
 // score 可落在两级之间(概率加权)。
 func Score(instructions any, criteria ScoreCriteria) Question {
-	return scoreQuestion{Type: "score", Instructions: instructions, Criteria: criteria}
+	return scoreQuestion{Type: TypeScore, Instructions: instructions, Criteria: criteria}
 }
 
 type noulQuestion struct {

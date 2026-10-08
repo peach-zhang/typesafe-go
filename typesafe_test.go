@@ -3,6 +3,7 @@ package typesafe
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"net/http"
 	"net/http/httptest"
@@ -533,5 +534,186 @@ func TestRetryAfterHeaderParsing(t *testing.T) {
 	p.RespectRetryAfter = false
 	if _, ok := p.retryAfter(h); ok {
 		t.Error("禁用 RespectRetryAfter 后不应解析")
+	}
+}
+
+func TestBackoffZeroInitialReturnsZero(t *testing.T) {
+	p := DefaultRetryPolicy()
+	p.BackoffInitial = 0
+	p.BackoffJitter = 0
+	if d := p.backoff(0); d != 0 {
+		t.Errorf("BackoffInitial=0 时应立即重试,得到 %v", d)
+	}
+	if d := p.backoff(3); d != 0 {
+		t.Errorf("BackoffInitial=0 时所有退避都应为 0,得到 %v", d)
+	}
+}
+
+func TestZeroTimeoutDisablesAttemptTimeout(t *testing.T) {
+	ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Write([]byte(okBody))
+	}))
+	defer ts.Close()
+
+	// 旧实现下 context.WithTimeout(ctx, 0) 会立即超时导致失败
+	c := newTestClient(t, ts, WithTimeout(0))
+	if _, err := c.SystemOne(context.Background(), SystemOneRequest{
+		State:     "test",
+		Questions: Questions{"x": Noul("?", nil)},
+	}); err != nil {
+		t.Fatalf("WithTimeout(0) 不应阻止请求: %v", err)
+	}
+}
+
+func TestResponseTooLargeNotRetried(t *testing.T) {
+	var calls atomic.Int32
+	ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		calls.Add(1)
+		w.Write([]byte(strings.Repeat("x", 100)))
+	}))
+	defer ts.Close()
+
+	c := newTestClient(t, ts, WithMaxResponseBytes(10), WithRetryPolicy(fastRetry()))
+	_, err := c.SystemOne(context.Background(), SystemOneRequest{
+		State:     "test",
+		Questions: Questions{"x": Noul("?", nil)},
+	})
+	if !errors.Is(err, ErrResponseTooLarge) {
+		t.Fatalf("期望 ErrResponseTooLarge,得到 %v", err)
+	}
+	if got := calls.Load(); got != 1 {
+		t.Errorf("响应超限不应重试,调用次数 = %d, 期望 1", got)
+	}
+}
+
+func TestResponseWithinLimitSucceeds(t *testing.T) {
+	ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Write([]byte(okBody))
+	}))
+	defer ts.Close()
+
+	// 上限设为响应体长度,恰好等于上限应成功(边界)
+	c := newTestClient(t, ts, WithMaxResponseBytes(int64(len(okBody))))
+	result, err := c.SystemOne(context.Background(), SystemOneRequest{
+		State:     "test",
+		Questions: Questions{"x": Noul("?", nil)},
+	})
+	if err != nil {
+		t.Fatalf("恰好等于上限应成功: %v", err)
+	}
+	if result.Answers["is_urgent"].Noul != 0.95 {
+		t.Errorf("答案异常: %+v", result.Answers["is_urgent"])
+	}
+}
+
+func TestAnswerTypedAccessors(t *testing.T) {
+	ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Write([]byte(okBody))
+	}))
+	defer ts.Close()
+
+	c := newTestClient(t, ts)
+	result, err := c.SystemOne(context.Background(), SystemOneRequest{
+		State:     "test",
+		Questions: sampleQuestions(),
+	})
+	if err != nil {
+		t.Fatalf("SystemOne: %v", err)
+	}
+
+	// 类型常量与返回的 Type 一致
+	if result.Answers["is_urgent"].Type != TypeNoul ||
+		result.Answers["category"].Type != TypeChoice ||
+		result.Answers["frustration"].Type != TypeScore {
+		t.Errorf("答案 Type 与常量不一致: %+v", result.Answers)
+	}
+
+	noul, ok := result.Answers["is_urgent"].AsNoul()
+	if !ok || noul.Probability != 0.95 {
+		t.Errorf("AsNoul = %+v, %v", noul, ok)
+	}
+	if _, ok := result.Answers["is_urgent"].AsChoice(); ok {
+		t.Error("noul 答案不应能断言为 choice")
+	}
+	if _, ok := result.Answers["is_urgent"].AsScore(); ok {
+		t.Error("noul 答案不应能断言为 score")
+	}
+
+	choice, ok := result.Answers["category"].AsChoice()
+	if !ok || choice.Choice != "billing" || choice.Confidence != 0.81 {
+		t.Errorf("AsChoice = %+v, %v", choice, ok)
+	}
+	if p := choice.Probabilities["technical"]; p != 0.12 {
+		t.Errorf("choice 分布异常: %v", choice.Probabilities)
+	}
+	if _, ok := result.Answers["category"].AsNoul(); ok {
+		t.Error("choice 答案不应能断言为 noul")
+	}
+
+	score, ok := result.Answers["frustration"].AsScore()
+	if !ok || score.Score != 1.05 || score.Legend["2"] != "Very angry" {
+		t.Errorf("AsScore = %+v, %v", score, ok)
+	}
+}
+
+// failTransport 每次往返都返回连接错误,并记录调用次数。
+type failTransport struct{ calls atomic.Int32 }
+
+func (t *failTransport) RoundTrip(*http.Request) (*http.Response, error) {
+	t.calls.Add(1)
+	return nil, errors.New("connection refused")
+}
+
+func TestRetryOnConnectionError(t *testing.T) {
+	tr := &failTransport{}
+	c, err := NewClient(
+		WithAPIKey("k"),
+		WithHTTPClient(&http.Client{Transport: tr}),
+		WithRetryPolicy(fastRetry()),
+	)
+	if err != nil {
+		t.Fatalf("NewClient: %v", err)
+	}
+	_, err = c.SystemOne(context.Background(), SystemOneRequest{
+		State:     "test",
+		Questions: Questions{"x": Noul("?", nil)},
+	})
+	if !IsConnectionError(err) {
+		t.Fatalf("期望 ConnectionError,得到 %v", err)
+	}
+	if got := tr.calls.Load(); got != 3 {
+		t.Errorf("连接错误应重试到耗尽,调用次数 = %d, 期望 3", got)
+	}
+}
+
+// timeoutTransport 阻塞到请求 context 结束,模拟单次尝试超时。
+type timeoutTransport struct{ calls atomic.Int32 }
+
+func (t *timeoutTransport) RoundTrip(req *http.Request) (*http.Response, error) {
+	t.calls.Add(1)
+	<-req.Context().Done()
+	return nil, req.Context().Err()
+}
+
+func TestRetryOnTimeout(t *testing.T) {
+	tr := &timeoutTransport{}
+	c, err := NewClient(
+		WithAPIKey("k"),
+		WithHTTPClient(&http.Client{Transport: tr}),
+		WithTimeout(20*time.Millisecond),
+		WithRetryPolicy(fastRetry()),
+	)
+	if err != nil {
+		t.Fatalf("NewClient: %v", err)
+	}
+	_, err = c.SystemOne(context.Background(), SystemOneRequest{
+		State:     "test",
+		Questions: Questions{"x": Noul("?", nil)},
+	})
+	if !IsTimeoutError(err) {
+		t.Fatalf("期望 TimeoutError,得到 %v", err)
+	}
+	if got := tr.calls.Load(); got != 3 {
+		t.Errorf("超时应重试到耗尽,调用次数 = %d, 期望 3", got)
 	}
 }

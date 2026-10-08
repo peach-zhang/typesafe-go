@@ -45,6 +45,9 @@ const (
 	DefaultModel = "jev-latest"
 	// DefaultTimeout 是单次请求尝试的超时。
 	DefaultTimeout = 60 * time.Second
+	// DefaultMaxResponseBytes 是响应体的默认大小上限(32 MiB),
+	// 防止异常或恶意服务端返回超大响应耗尽内存。
+	DefaultMaxResponseBytes int64 = 32 << 20
 
 	apiKeyEnv    = "TYPESAFE_API_KEY"
 	systemOneURL = "/v1/systemone"
@@ -58,10 +61,12 @@ type Client struct {
 	defaultModel   string
 	defaultHeaders map[string]string
 	timeout        time.Duration
-	retry          RetryPolicy
-	httpClient     *http.Client
-	logger         Logger
-	logLevel       LogLevel
+	// maxResponseBytes 是读取响应体的字节上限,<=0 表示不限制。
+	maxResponseBytes int64
+	retry            RetryPolicy
+	httpClient       *http.Client
+	logger           Logger
+	logLevel         LogLevel
 }
 
 // ClientOption 配置 Client,优先级高于环境变量与默认值。
@@ -92,9 +97,16 @@ func WithHeader(key, value string) ClientOption {
 	}
 }
 
-// WithTimeout 设置单次请求尝试的超时。
+// WithTimeout 设置单次请求尝试的超时;传入 <= 0 表示不设单次超时,
+// 仅受外层 ctx 控制。
 func WithTimeout(d time.Duration) ClientOption {
 	return func(c *Client) { c.timeout = d }
+}
+
+// WithMaxResponseBytes 设置读取响应体的字节上限;超过上限的响应会被
+// 拒绝并返回 ErrResponseTooLarge。传入 <= 0 表示不限制。
+func WithMaxResponseBytes(n int64) ClientOption {
+	return func(c *Client) { c.maxResponseBytes = n }
 }
 
 // WithRetryPolicy 覆盖重试策略。
@@ -112,12 +124,13 @@ func WithHTTPClient(hc *http.Client) ClientOption {
 // 两者都缺失时返回错误。
 func NewClient(opts ...ClientOption) (*Client, error) {
 	c := &Client{
-		baseURL:        DefaultBaseURL,
-		defaultModel:   DefaultModel,
-		timeout:        DefaultTimeout,
-		retry:          DefaultRetryPolicy(),
-		httpClient:     &http.Client{},
-		defaultHeaders: map[string]string{},
+		baseURL:          DefaultBaseURL,
+		defaultModel:     DefaultModel,
+		timeout:          DefaultTimeout,
+		maxResponseBytes: DefaultMaxResponseBytes,
+		retry:            DefaultRetryPolicy(),
+		httpClient:       &http.Client{},
+		defaultHeaders:   map[string]string{},
 	}
 	for _, opt := range opts {
 		opt(c)
@@ -216,10 +229,13 @@ func (c *Client) roundTrip(ctx context.Context, method, path string, body []byte
 			return err
 		}
 
-		// 取本地退避与服务器指示(Retry-After)中的较大者
+		// 取本地退避与服务器指示(Retry-After)中的较大者;
+		// 连接错误与超时没有响应头,retryAfter 为 nil
 		delay := c.retry.backoff(attempt)
-		if ra, ok := retryAfter(); ok && ra > delay {
-			delay = ra
+		if retryAfter != nil {
+			if ra, ok := retryAfter(); ok && ra > delay {
+				delay = ra
+			}
 		}
 		c.logf(LogLevelInfo, "%s %s 第 %d 次尝试失败(%v),%s 后重试",
 			method, path, attempt+1, err, delay)
@@ -230,10 +246,16 @@ func (c *Client) roundTrip(ctx context.Context, method, path string, body []byte
 }
 
 // attempt 执行单次请求尝试,成功时返回原始响应体。retryAfter 仅在返回
-// 可重试错误时非 nil,供调用方在退避前解析服务器建议的等待时长。
+// 可重试的 HTTP 状态错误(携带响应头)时非 nil,供调用方在退避前解析
+// 服务器建议的等待时长;连接错误与超时没有响应头,故返回 nil。
 func (c *Client) attempt(ctx context.Context, method, url string, body []byte) ([]byte, func() (time.Duration, bool), bool, error) {
-	attemptCtx, cancel := context.WithTimeout(ctx, c.timeout)
-	defer cancel()
+	// 仅在配置了正超时时才包装,WithTimeout(0) 表示不设单次超时
+	attemptCtx := ctx
+	if c.timeout > 0 {
+		var cancel context.CancelFunc
+		attemptCtx, cancel = context.WithTimeout(ctx, c.timeout)
+		defer cancel()
+	}
 
 	var reader io.Reader
 	if body != nil {
@@ -265,8 +287,12 @@ func (c *Client) attempt(ctx context.Context, method, url string, body []byte) (
 	}
 	defer resp.Body.Close()
 
-	respBody, err := io.ReadAll(resp.Body)
+	respBody, err := c.readBody(resp.Body)
 	if err != nil {
+		// 响应超限是本地保护性错误,重试也不会变小,直接失败
+		if errors.Is(err, ErrResponseTooLarge) {
+			return nil, nil, false, err
+		}
 		connErr := &APIConnectionError{Err: fmt.Errorf("读取响应体中断: %w", err)}
 		return nil, nil, c.retry.RetryConnectionErrors, connErr
 	}
@@ -286,6 +312,23 @@ func (c *Client) attempt(ctx context.Context, method, url string, body []byte) (
 	}
 
 	return respBody, nil, false, nil
+}
+
+// readBody 读取响应体,遵守客户端的大小上限。超限时返回包装了
+// ErrResponseTooLarge 的错误。
+func (c *Client) readBody(r io.Reader) ([]byte, error) {
+	if c.maxResponseBytes <= 0 {
+		return io.ReadAll(r)
+	}
+	// 多读 1 字节以便区分「恰好等于上限」与「超过上限」
+	body, err := io.ReadAll(io.LimitReader(r, c.maxResponseBytes+1))
+	if err != nil {
+		return nil, err
+	}
+	if int64(len(body)) > c.maxResponseBytes {
+		return nil, fmt.Errorf("%w: 上限 %d 字节", ErrResponseTooLarge, c.maxResponseBytes)
+	}
+	return body, nil
 }
 
 // extractMessage 尝试从错误响应体提取常见的错误说明字段。
